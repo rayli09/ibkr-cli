@@ -106,8 +106,14 @@ prints it verbatim and stops (exit code 5); answer it with
 
 	root.AddCommand(newAuthCmd(opts))
 	root.AddCommand(newAccountsCmd(opts))
+	root.AddCommand(newPortfolioCmd(opts))
 	root.AddCommand(newMarketCmd(opts))
+	root.AddCommand(newContractCmd(opts))
 	root.AddCommand(newOrdersCmd(opts))
+	root.AddCommand(newScannerCmd(opts))
+	root.AddCommand(newWatchlistCmd(opts))
+	root.AddCommand(newFACmd(opts))
+	root.AddCommand(newStreamCmd(opts))
 	return root, opts
 }
 
@@ -161,6 +167,53 @@ func (o *options) resolveAccount() (string, error) {
 
 // ctx returns a command context.
 func ctx() context.Context { return context.Background() }
+
+// readCall runs a read-only client call and prints the raw body
+// (the parity-extension commands print JSON; --json is therefore a
+// no-op for them, kept for uniformity with the older groups).
+func (o *options) readCall(fn func(cl *cpapi.Client) (*cpapi.Response, error)) error {
+	env, err := o.env()
+	if err != nil {
+		return err
+	}
+	resp, err := fn(env.client)
+	if err != nil {
+		return err
+	}
+	printBody(resp.Body)
+	return nil
+}
+
+// mutateCall is the dry-run rail for non-order mutations, mirroring
+// orders: the payload is printed first; without confirm nothing is
+// sent. With confirm the session is ensured, the call is sent, and
+// the exchange is written to the audit log.
+func (o *options) mutateCall(name, account string, confirm bool, payload any, fn func(cl *cpapi.Client) (*cpapi.Response, error)) error {
+	env, err := o.env()
+	if err != nil {
+		return err
+	}
+	reqJSON, _ := json.Marshal(payload)
+	fmt.Printf("%s payload:\n", name)
+	printBody(reqJSON)
+	if !confirm {
+		fmt.Println("DRY RUN — nothing was sent. Re-run with --confirm to send.")
+		return nil
+	}
+	if err := env.provider.EnsureSession(ctx()); err != nil {
+		return err
+	}
+	resp, err := fn(env.client)
+	if resp != nil {
+		o.auditCall(name, account, reqJSON, resp.Body, "")
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Println("sent:")
+	printBody(resp.Body)
+	return nil
+}
 
 // printBody renders a raw response body: pretty JSON when it parses.
 func printBody(body []byte) {

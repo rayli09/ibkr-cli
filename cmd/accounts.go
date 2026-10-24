@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rayli09/ibkr-cli/internal/config"
+	"github.com/rayli09/ibkr-cli/internal/cpapi"
 )
 
 func newAccountsCmd(opts *options) *cobra.Command {
@@ -19,9 +20,14 @@ func newAccountsCmd(opts *options) *cobra.Command {
 	}
 	c.AddCommand(newAccountsListCmd(opts))
 	c.AddCommand(newAccountsSummaryCmd(opts))
+	c.AddCommand(newAccountsISummaryCmd(opts))
 	c.AddCommand(newAccountsPositionsCmd(opts))
 	c.AddCommand(newAccountsLedgerCmd(opts))
 	c.AddCommand(newAccountsPnLCmd(opts))
+	c.AddCommand(newAccountsSearchCmd(opts))
+	c.AddCommand(newAccountsSignaturesCmd(opts))
+	c.AddCommand(newAccountsSwitchCmd(opts))
+	c.AddCommand(newAccountsSetDynamicCmd(opts))
 	return c
 }
 
@@ -242,4 +248,89 @@ func newAccountsPnLCmd(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// --- accounts parity additions (IBind accounts_mixin) ---------------
+
+func newAccountsISummaryCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "summary-iserver",
+		Short: "Account summary, /iserver variant (GET /iserver/account/{id}/summary; IBind account_summary)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			acct, err := opts.resolveAccount()
+			if err != nil {
+				return err
+			}
+			return opts.readCall(func(cl *cpapi.Client) (*cpapi.Response, error) {
+				return cl.IServerAccountSummary(ctx(), acct)
+			})
+		},
+	}
+}
+
+func newAccountsSearchCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "search <pattern>",
+		Short: "Resolve a dynamic-account pattern (GET /iserver/account/search/{pattern})",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.readCall(func(cl *cpapi.Client) (*cpapi.Response, error) {
+				return cl.SearchDynamicAccount(ctx(), args[0])
+			})
+		},
+	}
+}
+
+func newAccountsSignaturesCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "signatures",
+		Short: "Account owners and signatories (GET /acesws/{id}/signatures-and-owners)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			acct, err := opts.resolveAccount()
+			if err != nil {
+				return err
+			}
+			return opts.readCall(func(cl *cpapi.Client) (*cpapi.Response, error) {
+				return cl.SignaturesAndOwners(ctx(), acct)
+			})
+		},
+	}
+}
+
+func newAccountsSwitchCmd(opts *options) *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "switch <account-id>",
+		Short: "Switch the session's active account (POST /iserver/account); requires --confirm",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.mutateCall("accounts switch", args[0], confirm,
+				map[string]any{"acctId": args[0]},
+				func(cl *cpapi.Client) (*cpapi.Response, error) {
+					return cl.SwitchAccount(ctx(), args[0])
+				})
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually switch (without it: dry run)")
+	return cmd
+}
+
+func newAccountsSetDynamicCmd(opts *options) *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "set-dynamic <account-id>",
+		Short: "Select the dynamic account (POST /iserver/dynaccount); requires --confirm",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.mutateCall("accounts set-dynamic", args[0], confirm,
+				map[string]any{"acctId": args[0]},
+				func(cl *cpapi.Client) (*cpapi.Response, error) {
+					return cl.SetDynamicAccount(ctx(), args[0])
+				})
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually set (without it: dry run)")
+	return cmd
 }

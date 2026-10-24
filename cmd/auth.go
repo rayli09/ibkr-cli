@@ -15,6 +15,7 @@ import (
 	"github.com/rayli09/ibkr-cli/internal/apierr"
 	"github.com/rayli09/ibkr-cli/internal/auth"
 	"github.com/rayli09/ibkr-cli/internal/config"
+	"github.com/rayli09/ibkr-cli/internal/cpapi"
 )
 
 func newAuthCmd(opts *options) *cobra.Command {
@@ -24,7 +25,9 @@ func newAuthCmd(opts *options) *cobra.Command {
 	}
 	authCmd.AddCommand(newAuthInitCmd(opts))
 	authCmd.AddCommand(newAuthStatusCmd(opts))
+	authCmd.AddCommand(newAuthHealthCmd(opts))
 	authCmd.AddCommand(newAuthTickleCmd(opts))
+	authCmd.AddCommand(newAuthLogoutCmd(opts))
 	authCmd.AddCommand(newAuthReauthCmd(opts))
 	authCmd.AddCommand(newAuthValidateCmd(opts))
 	authCmd.AddCommand(newAuthOAuthStatusCmd(opts))
@@ -323,6 +326,56 @@ func newAuthOAuthStatusCmd(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// --- auth health / logout (IBind parity) --------------------------
+
+func newAuthHealthCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "health",
+		Short: "Gateway health check: tickle + auth status verdict (IBind check_health)",
+		Long: `Mirrors IBind's check_health: performs a tickle and reports
+healthy only when the session is authenticated, connected, and not
+competing. Prints the tickle payload; exits 3 when unhealthy.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := opts.env()
+			if err != nil {
+				return err
+			}
+			healthy, resp, err := env.client.Health(ctx())
+			if err != nil {
+				return err
+			}
+			printBody(resp.Body)
+			if !healthy {
+				return &apierr.SessionError{Msg: "session not healthy (not authenticated, not connected, or competing)"}
+			}
+			fmt.Println("healthy: authenticated, connected, not competing.")
+			return nil
+		},
+	}
+}
+
+func newAuthLogoutCmd(opts *options) *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "logout",
+		Short: "End the current session (POST /logout); requires --confirm",
+		Long: `Logs out the current session (IBind: logout). This ends the
+brokerage session — in gateway mode IBeam will log back in on its
+own schedule. Dry-run by default like every mutation in this CLI.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.mutateCall("auth logout", "", confirm,
+				map[string]any{"endpoint": "POST /logout"},
+				func(cl *cpapi.Client) (*cpapi.Response, error) {
+					return cl.Logout(ctx())
+				})
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually log out (without it: dry run)")
+	return cmd
 }
 
 var _ io.Reader // io retained for prompt helpers shared across files

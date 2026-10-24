@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,8 @@ func newOrdersCmd(opts *options) *cobra.Command {
 	c.AddCommand(newOrdersReplyCmd(opts))
 	c.AddCommand(newOrdersModifyCmd(opts))
 	c.AddCommand(newOrdersCancelCmd(opts))
+	c.AddCommand(newOrdersSuppressCmd(opts))
+	c.AddCommand(newOrdersSuppressResetCmd(opts))
 	return c
 }
 
@@ -134,7 +137,9 @@ func handleSendOutcome(out *cpapi.OrderOutcome, err error) error {
 }
 
 func newOrdersListCmd(opts *options) *cobra.Command {
-	return &cobra.Command{
+	var filterStr string
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Working orders for the session (GET /iserver/account/orders)",
 		Args:  cobra.NoArgs,
@@ -144,7 +149,11 @@ func newOrdersListCmd(opts *options) *cobra.Command {
 				return err
 			}
 			acctFilter := opts.account
-			resp, err := env.client.LiveOrders(ctx(), acctFilter)
+			var filters []string
+			if filterStr != "" {
+				filters = strings.Split(filterStr, ",")
+			}
+			resp, err := env.client.LiveOrders(ctx(), acctFilter, filters, force)
 			if err != nil {
 				return err
 			}
@@ -163,6 +172,9 @@ func newOrdersListCmd(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&filterStr, "filters", "", "comma-separated order-status filters (IBind live_orders: inactive, submitted, filled, cancelled, sort_by_time, ...)")
+	cmd.Flags().BoolVar(&force, "force", false, "force a fresh server fetch; also clears cached filter state that would suppress the WS sor topic")
+	return cmd
 }
 
 type orderRow struct {
@@ -218,7 +230,7 @@ func newOrdersTradesCmd(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := env.client.Trades(ctx(), days)
+			resp, err := env.client.Trades(ctx(), days, opts.account)
 			if err != nil {
 				return err
 			}
@@ -429,5 +441,47 @@ func newOrdersCancelCmd(opts *options) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually cancel (without it: show the order only)")
+	return cmd
+}
+
+// --- orders parity additions (IBind order_mixin) --------------------
+
+func newOrdersSuppressCmd(opts *options) *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "suppress <message-id>...",
+		Short: "Suppress order-confirmation messages by id (POST /iserver/questions/suppress); requires --confirm",
+		Long: `Suppresses the named confirmation-message ids for the session
+(IBind: suppress_messages). Note the safety posture of this CLI:
+suppression silences future questions of those types; questions
+that do arrive are still never auto-answered.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.mutateCall("orders suppress", opts.account, confirm,
+				map[string]any{"messageIds": args},
+				func(cl *cpapi.Client) (*cpapi.Response, error) {
+					return cl.SuppressMessages(ctx(), args)
+				})
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually suppress (without it: dry run)")
+	return cmd
+}
+
+func newOrdersSuppressResetCmd(opts *options) *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "suppress-reset",
+		Short: "Clear all suppressed message ids (POST /iserver/questions/suppress/reset); requires --confirm",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return opts.mutateCall("orders suppress-reset", opts.account, confirm,
+				map[string]any{"endpoint": "POST /iserver/questions/suppress/reset"},
+				func(cl *cpapi.Client) (*cpapi.Response, error) {
+					return cl.ResetSuppressedMessages(ctx())
+				})
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "actually reset (without it: dry run)")
 	return cmd
 }

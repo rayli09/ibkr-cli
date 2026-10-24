@@ -29,7 +29,13 @@ func newMarketCmd(opts *options) *cobra.Command {
 	c.AddCommand(newMarketStocksCmd(opts))
 	c.AddCommand(newMarketInfoCmd(opts))
 	c.AddCommand(newMarketQuoteCmd(opts))
+	c.AddCommand(newMarketQuoteSymbolsCmd(opts))
+	c.AddCommand(newMarketRegsnapshotCmd(opts))
 	c.AddCommand(newMarketHistoryCmd(opts))
+	c.AddCommand(newMarketHistoryBetaCmd(opts))
+	c.AddCommand(newMarketHistorySymbolCmd(opts))
+	c.AddCommand(newMarketHistorySymbolsCmd(opts))
+	c.AddCommand(newMarketHistoryMultiCmd(opts))
 	c.AddCommand(newMarketStrikesCmd(opts))
 	c.AddCommand(newMarketChainCmd(opts))
 	return c
@@ -122,7 +128,7 @@ func newMarketStocksCmd(opts *options) *cobra.Command {
 }
 
 func newMarketInfoCmd(opts *options) *cobra.Command {
-	var secType, month, exchange, right string
+	var secType, month, exchange, right, issuerID string
 	var strike float64
 	cmd := &cobra.Command{
 		Use:   "info <conid>",
@@ -137,7 +143,7 @@ func newMarketInfoCmd(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := env.client.SecdefInfo(ctx(), ids[0], secType, month, exchange, right, strike)
+			resp, err := env.client.SecdefInfo(ctx(), ids[0], secType, month, exchange, right, strike, issuerID)
 			if err != nil {
 				return err
 			}
@@ -150,6 +156,7 @@ func newMarketInfoCmd(opts *options) *cobra.Command {
 	cmd.Flags().Float64Var(&strike, "strike", 0, "option strike")
 	cmd.Flags().StringVar(&right, "right", "", "option right: C or P")
 	cmd.Flags().StringVar(&exchange, "exchange", "", "exchange filter")
+	cmd.Flags().StringVar(&issuerID, "issuer-id", "", "bond issuer id (IBind: issuerId)")
 	return cmd
 }
 
@@ -216,7 +223,7 @@ closed) instead of printing a silent empty row.`,
 }
 
 func newMarketHistoryCmd(opts *options) *cobra.Command {
-	var period, bar string
+	var period, bar, exchange, startTime string
 	var outsideRTH bool
 	cmd := &cobra.Command{
 		Use:   "history <conid>",
@@ -231,7 +238,7 @@ func newMarketHistoryCmd(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := env.client.History(ctx(), ids[0], period, bar, outsideRTH)
+			resp, err := env.client.HistoryEx(ctx(), ids[0], period, bar, outsideRTH, exchange, startTime)
 			if err != nil {
 				return err
 			}
@@ -265,16 +272,18 @@ func newMarketHistoryCmd(opts *options) *cobra.Command {
 	cmd.Flags().StringVar(&period, "period", "1w", "period: 1d, 1w, 1m, 3m, 6m, 1y, ...")
 	cmd.Flags().StringVar(&bar, "bar", "1d", "bar size: 1min, 5min, 1h, 1d, 1w, 1m")
 	cmd.Flags().BoolVar(&outsideRTH, "outside-rth", false, "include data outside regular trading hours")
+	cmd.Flags().StringVar(&exchange, "exchange", "", "exchange to source bars from (IBind: exchange)")
+	cmd.Flags().StringVar(&startTime, "start-time", "", "start time YYYYMMDD-HH:MM:SS (IBind: startTime)")
 	return cmd
 }
 
 var monthCodeRe = regexp.MustCompile(`^[A-Z]{3}\d{2}$`)
 
 func newMarketStrikesCmd(opts *options) *cobra.Command {
-	var month string
+	var month, secType, exchange string
 	cmd := &cobra.Command{
 		Use:   "strikes <underlier-conid>",
-		Short: "Option strikes for an underlier and month (GET /iserver/secdef/strikes)",
+		Short: "Strikes for an underlier and month (GET /iserver/secdef/strikes)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := opts.env()
@@ -288,7 +297,7 @@ func newMarketStrikesCmd(opts *options) *cobra.Command {
 			if !monthCodeRe.MatchString(month) {
 				return &apierr.UsageError{Msg: "--month must look like NOV26 (three-letter month + two-digit year)"}
 			}
-			strikes, resp, err := env.client.SecdefStrikes(ctx(), ids[0], month)
+			strikes, resp, err := env.client.SecdefStrikes(ctx(), ids[0], month, secType, exchange)
 			if err != nil {
 				return err
 			}
@@ -302,6 +311,8 @@ func newMarketStrikesCmd(opts *options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&month, "month", "", "option month, e.g. NOV26 (required)")
+	cmd.Flags().StringVar(&secType, "sectype", "OPT", "security type: OPT or WAR")
+	cmd.Flags().StringVar(&exchange, "exchange", "", "exchange filter (default SMART)")
 	return cmd
 }
 
@@ -372,7 +383,7 @@ update are marked stale (*).`,
 				return err
 			}
 			month := fmt.Sprintf("%s%02d", monthNames[int(exp.Month())-1], exp.Year()%100)
-			strikes, _, err := env.client.SecdefStrikes(ctx(), underlier, month)
+			strikes, _, err := env.client.SecdefStrikes(ctx(), underlier, month, "OPT", "")
 			if err != nil {
 				return err
 			}
@@ -529,7 +540,7 @@ func legCell(l *chainLeg, get func(*chainLeg) string) string {
 // returns the conid whose maturityDate equals expiry (YYYYMMDD), or 0
 // when the strike/right has no contract for that date.
 func resolveOptionConid(client *cpapi.Client, underlier int64, month, expiry string, strike float64, right string) (int64, error) {
-	resp, err := client.SecdefInfo(ctx(), underlier, "OPT", month, "", right, strike)
+	resp, err := client.SecdefInfo(ctx(), underlier, "OPT", month, "", right, strike, "")
 	if err != nil {
 		return 0, err
 	}
@@ -556,4 +567,188 @@ func digitsOnly(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// --- market parity additions (IBind marketdata_mixin) ---------------
+
+func newMarketQuoteSymbolsCmd(opts *options) *cobra.Command {
+	var fields string
+	var noDefaultFiltering bool
+	cmd := &cobra.Command{
+		Use:   "quote-symbols <symbol>...",
+		Short: "Snapshot quotes by symbol (IBind live_marketdata_snapshot_by_symbol)",
+		Long: `Resolves each symbol to a conid (IBind's stock_conid_by_symbol
+rules: US contracts only, ambiguity is an error) and snapshots them
+in one primed call. Unresolvable symbols are named on stderr.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := opts.env()
+			if err != nil {
+				return err
+			}
+			useFields := cpapi.QuoteFields
+			if fields != "" {
+				useFields = strings.Split(fields, ",")
+			}
+			bySymbol, unresolved, err := env.client.SnapshotBySymbol(ctx(), args, useFields, !noDefaultFiltering)
+			if err != nil {
+				return err
+			}
+			data, _ := json.Marshal(bySymbol)
+			printBody(data)
+			for _, u := range unresolved {
+				fmt.Fprintf(os.Stderr, "note: unresolved symbol %s\n", u)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fields, "fields", "", "comma-separated snapshot field codes (default: quote set)")
+	cmd.Flags().BoolVar(&noDefaultFiltering, "no-default-filtering", false, "do not restrict resolution to US contracts (IBind default_filtering=False)")
+	return cmd
+}
+
+func newMarketRegsnapshotCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "regsnapshot <conid>",
+		Short: "Regulatory (FINRA/NBBO) snapshot (GET /md/regsnapshot)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := parseConids(args)
+			if err != nil {
+				return err
+			}
+			return opts.readCall(func(cl *cpapi.Client) (*cpapi.Response, error) {
+				return cl.RegulatorySnapshot(ctx(), ids[0])
+			})
+		},
+	}
+}
+
+func newMarketHistoryBetaCmd(opts *options) *cobra.Command {
+	var period, bar, startTime, direction, barType string
+	var outsideRTH bool
+	cmd := &cobra.Command{
+		Use:   "history-beta <conid>",
+		Short: "History via the HMDS service (GET /hmds/history; IBind historical_marketdata_beta)",
+		Long: `Queries the historical market data service directly. Upstream
+quirk (documented by IBind): the first call for a conid can return
+404 while the service instantiates — retry in that case.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := parseConids(args)
+			if err != nil {
+				return err
+			}
+			return opts.readCall(func(cl *cpapi.Client) (*cpapi.Response, error) {
+				return cl.HMDSHistory(ctx(), ids[0], period, bar, outsideRTH, startTime, direction, barType)
+			})
+		},
+	}
+	cmd.Flags().StringVar(&period, "period", "1w", "period: 1d, 1w, 1m, 3m, 6m, 1y, ...")
+	cmd.Flags().StringVar(&bar, "bar", "1d", "bar size: 1min, 5min, 1h, 1d, 1w, 1m")
+	cmd.Flags().BoolVar(&outsideRTH, "outside-rth", false, "include data outside regular trading hours")
+	cmd.Flags().StringVar(&startTime, "start-time", "", "start time YYYYMMDD-HH:MM:SS")
+	cmd.Flags().StringVar(&direction, "direction", "", "direction: 1 (forward) or -1")
+	cmd.Flags().StringVar(&barType, "bar-type", "", "bar type (e.g. TRADES)")
+	return cmd
+}
+
+func historyBySymbols(opts *options, symbols []string, period, bar string, outsideRTH, noDefaultFiltering bool) error {
+	env, err := opts.env()
+	if err != nil {
+		return err
+	}
+	conids := make([]int64, 0, len(symbols))
+	for _, sym := range symbols {
+		id, _, err := env.client.StockConid(ctx(), sym, !noDefaultFiltering)
+		if err != nil {
+			return err
+		}
+		conids = append(conids, id)
+	}
+	results, errs := env.client.HistoryByConids(ctx(), conids, period, bar, outsideRTH)
+	out := make(map[string]json.RawMessage, len(symbols))
+	for i, sym := range symbols {
+		if raw, ok := results[conids[i]]; ok {
+			out[sym] = raw
+		}
+	}
+	data, _ := json.Marshal(out)
+	printBody(data)
+	for id, err := range errs {
+		fmt.Fprintf(os.Stderr, "note: history failed for conid %d: %v\n", id, err)
+	}
+	return nil
+}
+
+func newMarketHistorySymbolCmd(opts *options) *cobra.Command {
+	var period, bar string
+	var outsideRTH, noDefaultFiltering bool
+	cmd := &cobra.Command{
+		Use:   "history-symbol <symbol>",
+		Short: "History bars by symbol (IBind marketdata_history_by_symbol)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return historyBySymbols(opts, args, period, bar, outsideRTH, noDefaultFiltering)
+		},
+	}
+	addHistoryFlags(cmd, &period, &bar, &outsideRTH, &noDefaultFiltering)
+	return cmd
+}
+
+func newMarketHistorySymbolsCmd(opts *options) *cobra.Command {
+	var period, bar string
+	var outsideRTH, noDefaultFiltering bool
+	cmd := &cobra.Command{
+		Use:   "history-symbols <symbol>...",
+		Short: "History bars for several symbols (IBind marketdata_history_by_symbols)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return historyBySymbols(opts, args, period, bar, outsideRTH, noDefaultFiltering)
+		},
+	}
+	addHistoryFlags(cmd, &period, &bar, &outsideRTH, &noDefaultFiltering)
+	return cmd
+}
+
+func newMarketHistoryMultiCmd(opts *options) *cobra.Command {
+	var period, bar string
+	var outsideRTH bool
+	cmd := &cobra.Command{
+		Use:   "history-multi <conid>...",
+		Short: "History bars for several conids in parallel (IBind marketdata_history_by_conids)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := opts.env()
+			if err != nil {
+				return err
+			}
+			ids, err := parseConids(args)
+			if err != nil {
+				return err
+			}
+			results, errs := env.client.HistoryByConids(ctx(), ids, period, bar, outsideRTH)
+			out := make(map[string]json.RawMessage, len(results))
+			for id, raw := range results {
+				out[fmt.Sprint(id)] = raw
+			}
+			data, _ := json.Marshal(out)
+			printBody(data)
+			for id, err := range errs {
+				fmt.Fprintf(os.Stderr, "note: history failed for conid %d: %v\n", id, err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&period, "period", "1w", "period: 1d, 1w, 1m, 3m, 6m, 1y, ...")
+	cmd.Flags().StringVar(&bar, "bar", "1d", "bar size: 1min, 5min, 1h, 1d, 1w, 1m")
+	cmd.Flags().BoolVar(&outsideRTH, "outside-rth", false, "include data outside regular trading hours")
+	return cmd
+}
+
+func addHistoryFlags(cmd *cobra.Command, period, bar *string, outsideRTH, noDefaultFiltering *bool) {
+	cmd.Flags().StringVar(period, "period", "1w", "period: 1d, 1w, 1m, 3m, 6m, 1y, ...")
+	cmd.Flags().StringVar(bar, "bar", "1d", "bar size: 1min, 5min, 1h, 1d, 1w, 1m")
+	cmd.Flags().BoolVar(outsideRTH, "outside-rth", false, "include data outside regular trading hours")
+	cmd.Flags().BoolVar(noDefaultFiltering, "no-default-filtering", false, "do not restrict symbol resolution to US contracts")
 }
