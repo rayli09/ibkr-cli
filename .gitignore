@@ -1,0 +1,3 @@
+/ibkr-cli
+*.test
+coverage.out
