@@ -12,14 +12,17 @@ import (
 // timestamps, and a semaphore — because the CLI is one-shot and
 // mostly sequential.
 var routeLimits = map[string]time.Duration{
-	"snapshot":  100 * time.Millisecond, // 10 req/s
-	"orders":    5 * time.Second,        // 1 req / 5 s
-	"trades":    5 * time.Second,        // 1 req / 5 s
-	"pnl":       5 * time.Second,        // 1 req / 5 s
-	"portfolio": 5 * time.Second,        // 1 req / 5 s
-	"tickle":    time.Second,            // 1 req / s
-	"validate":  time.Minute,            // 1 req / min
-	"default":   0,
+	"snapshot":      100 * time.Millisecond, // 10 req/s
+	"orders":        5 * time.Second,        // 1 req / 5 s
+	"trades":        5 * time.Second,        // 1 req / 5 s
+	"pnl":           5 * time.Second,        // 1 req / 5 s
+	"portfolio":     5 * time.Second,        // 1 req / 5 s
+	"tickle":        time.Second,            // 1 req / s
+	"validate":      time.Minute,            // 1 req / min
+	"scannerrun":    time.Second,            // 1 req / s
+	"scannerparams": 15 * time.Minute,       // 1 req / 15 min
+	"pa":            15 * time.Minute,       // 1 req / 15 min (/pa/performance, /pa/allperiods, /pa/transactions)
+	"default":       0,
 }
 
 const historyConcurrency = 5

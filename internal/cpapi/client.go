@@ -101,6 +101,14 @@ func routeOf(path string) string {
 		return "snapshot"
 	case strings.HasSuffix(path, "/iserver/marketdata/history"):
 		return "history"
+	case strings.HasPrefix(path, "/hmds/"):
+		return "history"
+	case strings.HasSuffix(path, "/iserver/scanner/params"), strings.HasSuffix(path, "/hmds/scanner/params"):
+		return "scannerparams"
+	case strings.HasSuffix(path, "/iserver/scanner/run"), strings.HasSuffix(path, "/hmds/scanner/run"):
+		return "scannerrun"
+	case strings.HasPrefix(path, "/pa/"):
+		return "pa"
 	case strings.HasSuffix(path, "/iserver/account/orders"):
 		return "orders"
 	case strings.HasSuffix(path, "/iserver/account/trades"):
@@ -262,6 +270,11 @@ func (c *Client) Post(ctx context.Context, path string, body any) (*Response, er
 // Delete is Do for a delete.
 func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
 	return c.Do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// DeleteQ is Do for a delete with query parameters.
+func (c *Client) DeleteQ(ctx context.Context, path string, query url.Values) (*Response, error) {
+	return c.Do(ctx, http.MethodDelete, path, query, nil)
 }
 
 // setParam sets a query parameter only when value is non-empty.

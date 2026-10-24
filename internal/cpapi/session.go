@@ -3,6 +3,8 @@ package cpapi
 import (
 	"context"
 	"net/url"
+
+	"github.com/rayli09/ibkr-cli/internal/apierr"
 )
 
 // AuthStatus is the decoded POST /iserver/auth/status response.
@@ -58,4 +60,34 @@ func (c *Client) SSODHInit(ctx context.Context, compete bool) (*Response, error)
 // Validate calls GET /sso/validate (outer read-only session check).
 func (c *Client) Validate(ctx context.Context) (*Response, error) {
 	return c.Get(ctx, "/sso/validate", url.Values{})
+}
+
+// Logout ends the current session. POST /logout (IBind: logout).
+// Session-mutating: the CLI gates it behind --confirm.
+func (c *Client) Logout(ctx context.Context) (*Response, error) {
+	return c.Post(ctx, "/logout", nil)
+}
+
+// Health mirrors IBind's check_health: a tickle whose payload must
+// carry iserver.authStatus with authenticated set; healthy means
+// authenticated && connected && !competing (IBind _parse_auth_status).
+func (c *Client) Health(ctx context.Context) (bool, *Response, error) {
+	resp, err := c.Tickle(ctx)
+	if err != nil {
+		return false, resp, err
+	}
+	var t struct {
+		IServer struct {
+			AuthStatus *AuthStatus `json:"authStatus"`
+		} `json:"iserver"`
+	}
+	if err := resp.JSON(&t); err != nil {
+		return false, resp, err
+	}
+	if t.IServer.AuthStatus == nil {
+		return false, resp, &apierr.APIError{StatusCode: resp.StatusCode,
+			Body: "tickle response carried no iserver.authStatus (gateway health check invalid)"}
+	}
+	st := t.IServer.AuthStatus
+	return st.Authenticated && st.Connected && !st.Competing, resp, nil
 }

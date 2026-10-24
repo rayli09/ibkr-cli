@@ -61,10 +61,18 @@ func OrdersBody(reqs ...OrderRequest) map[string]any {
 }
 
 // LiveOrders returns the session's working orders.
-// GET /iserver/account/orders
-func (c *Client) LiveOrders(ctx context.Context, accountID string) (*Response, error) {
+// GET /iserver/account/orders (IBind: live_orders — filters are
+// comma-joined status values; force clears the server's cached
+// filter state, which otherwise also suppresses the WS "sor" topic.)
+func (c *Client) LiveOrders(ctx context.Context, accountID string, filters []string, force bool) (*Response, error) {
 	q := url.Values{}
 	setParam(q, "accountId", accountID)
+	if len(filters) > 0 {
+		q.Set("filters", strings.Join(filters, ","))
+	}
+	if force {
+		q.Set("force", "true")
+	}
 	return c.Get(ctx, "/iserver/account/orders", q)
 }
 
@@ -74,12 +82,27 @@ func (c *Client) OrderStatus(ctx context.Context, orderID string) (*Response, er
 	return c.Get(ctx, "/iserver/account/order/status/"+url.PathEscape(orderID), nil)
 }
 
-// Trades returns executions for the session (optionally N days back).
-// GET /iserver/account/trades
-func (c *Client) Trades(ctx context.Context, days string) (*Response, error) {
+// Trades returns executions for the session (optionally N days back,
+// optionally for one account). GET /iserver/account/trades
+func (c *Client) Trades(ctx context.Context, days, accountID string) (*Response, error) {
 	q := url.Values{}
 	setParam(q, "days", days)
+	setParam(q, "accountId", accountID)
 	return c.Get(ctx, "/iserver/account/trades", q)
+}
+
+// SuppressMessages suppresses order-confirmation messages by id for
+// the session. POST /iserver/questions/suppress (IBind:
+// suppress_messages). Mutating: the CLI gates it behind --confirm.
+func (c *Client) SuppressMessages(ctx context.Context, messageIDs []string) (*Response, error) {
+	return c.Post(ctx, "/iserver/questions/suppress", map[string]any{"messageIds": messageIDs})
+}
+
+// ResetSuppressedMessages clears all suppressed message ids.
+// POST /iserver/questions/suppress/reset (IBind:
+// reset_suppressed_messages). Mutating: gated behind --confirm.
+func (c *Client) ResetSuppressedMessages(ctx context.Context) (*Response, error) {
+	return c.Post(ctx, "/iserver/questions/suppress/reset", nil)
 }
 
 // WhatIf previews an order: margin and commission impact, no order

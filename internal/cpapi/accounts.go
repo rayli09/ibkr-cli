@@ -109,3 +109,37 @@ func (c *Client) AccountLedger(ctx context.Context, accountID string) (*Response
 func (c *Client) AccountPnL(ctx context.Context) (*Response, error) {
 	return c.Get(ctx, "/iserver/account/pnl/partitioned", nil)
 }
+
+// IServerAccountSummary is IBind's account_summary: the /iserver
+// variant of the account summary (distinct from the /portfolio
+// summary behind AccountSummary). GET /iserver/account/{accountId}/summary
+func (c *Client) IServerAccountSummary(ctx context.Context, accountID string) (*Response, error) {
+	return c.Get(ctx, "/iserver/account/"+url.PathEscape(accountID)+"/summary", nil)
+}
+
+// SearchDynamicAccount resolves a dynamic-account pattern (account
+// number / username / alias) to matching accounts.
+// GET /iserver/account/search/{pattern} (IBind: search_dynamic_account)
+func (c *Client) SearchDynamicAccount(ctx context.Context, pattern string) (*Response, error) {
+	return c.Get(ctx, "/iserver/account/search/"+url.PathEscape(pattern), nil)
+}
+
+// SetDynamicAccount selects the dynamic account. POST /iserver/dynaccount
+// with {"acctId": ...} (IBind: set_dynamic_account). Mutating: the CLI
+// gates it behind --confirm.
+func (c *Client) SetDynamicAccount(ctx context.Context, accountID string) (*Response, error) {
+	return c.Post(ctx, "/iserver/dynaccount", map[string]any{"acctId": accountID})
+}
+
+// SignaturesAndOwners returns account owners and signatories.
+// GET /acesws/{accountId}/signatures-and-owners (IBind: signatures_and_owners)
+func (c *Client) SignaturesAndOwners(ctx context.Context, accountID string) (*Response, error) {
+	return c.Get(ctx, "/acesws/"+url.PathEscape(accountID)+"/signatures-and-owners", nil)
+}
+
+// SwitchAccount switches the session's active account.
+// POST /iserver/account with {"acctId": ...} (IBind: switch_account).
+// Mutating: the CLI gates it behind --confirm.
+func (c *Client) SwitchAccount(ctx context.Context, accountID string) (*Response, error) {
+	return c.Post(ctx, "/iserver/account", map[string]any{"acctId": accountID})
+}

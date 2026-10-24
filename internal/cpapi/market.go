@@ -112,8 +112,9 @@ func (c *Client) Stocks(ctx context.Context, symbols []string) (StockContracts, 
 
 // SecdefInfo queries contract details; for options it resolves the
 // conid of one (underlier, month, strike, right) combination.
-// GET /iserver/secdef/info
-func (c *Client) SecdefInfo(ctx context.Context, conid int64, secType, month, exchange, right string, strike float64) (*Response, error) {
+// GET /iserver/secdef/info (IBind: search_secdef_info_by_conid;
+// issuerId selects a specific bond issuer.)
+func (c *Client) SecdefInfo(ctx context.Context, conid int64, secType, month, exchange, right string, strike float64, issuerID string) (*Response, error) {
 	q := url.Values{}
 	q.Set("conid", fmt.Sprint(conid))
 	setParam(q, "sectype", secType)
@@ -123,6 +124,7 @@ func (c *Client) SecdefInfo(ctx context.Context, conid int64, secType, month, ex
 		q.Set("strike", strconv.FormatFloat(strike, 'f', -1, 64))
 	}
 	setParam(q, "right", right)
+	setParam(q, "issuerId", issuerID)
 	return c.Get(ctx, "/iserver/secdef/info", q)
 }
 
@@ -132,14 +134,19 @@ type Strikes struct {
 	Put  []float64 `json:"put"`
 }
 
-// SecdefStrikes lists option strikes for an underlier and month
+// SecdefStrikes lists strikes for an underlier and month
 // (month as JAN26-style: three-letter month + two-digit year).
-// GET /iserver/secdef/strikes
-func (c *Client) SecdefStrikes(ctx context.Context, underlierConid int64, month string) (*Strikes, *Response, error) {
+// GET /iserver/secdef/strikes (IBind: search_strikes_by_conid;
+// secType defaults to OPT, exchange filters the listing venue.)
+func (c *Client) SecdefStrikes(ctx context.Context, underlierConid int64, month, secType, exchange string) (*Strikes, *Response, error) {
+	if secType == "" {
+		secType = "OPT"
+	}
 	q := url.Values{}
 	q.Set("conid", fmt.Sprint(underlierConid))
-	q.Set("sectype", "OPT")
+	q.Set("sectype", secType)
 	q.Set("month", month)
+	setParam(q, "exchange", exchange)
 	resp, err := c.Get(ctx, "/iserver/secdef/strikes", q)
 	if err != nil {
 		return nil, resp, err
