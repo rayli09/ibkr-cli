@@ -73,16 +73,24 @@ func TestHelpListsCommands(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	for _, want := range []string{"auth", "accounts", "market", "orders"} {
+	for _, want := range []string{"auth", "accounts", "portfolio", "market", "contract", "orders", "scanner", "watchlist", "fa", "stream"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help missing %q", want)
 		}
 	}
-	// The full leaf set: 6 auth + 5 accounts + 7 market + 7 orders.
+	// The full leaf set: 8 auth + 10 accounts + 17 portfolio +
+	// 13 market + 12 contract + 9 orders + 4 scanner + 4 watchlist +
+	// 10 fa + 7 stream = 94.
 	stdout, _, _ = runRoot(t, "orders", "--help")
-	for _, want := range []string{"list", "status", "trades", "place", "reply", "modify", "cancel"} {
+	for _, want := range []string{"list", "status", "trades", "place", "reply", "modify", "cancel", "suppress", "suppress-reset"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("orders help missing %q", want)
+		}
+	}
+	stdout, _, _ = runRoot(t, "stream", "--help")
+	for _, want := range []string{"market", "history", "ladder", "orders", "trades", "account", "notifications"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stream help missing %q", want)
 		}
 	}
 }

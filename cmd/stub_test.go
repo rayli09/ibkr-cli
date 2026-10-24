@@ -29,6 +29,19 @@ type stubCPAPI struct {
 	placeCalls    int
 	whatifCalls   int
 	validate429   int
+
+	// Parity-extension mutation counters (dry-run proofs).
+	logoutCalls     int
+	switchCalls     int
+	dynCalls        int
+	suppressCalls   int
+	invalidateCalls int
+	wlCreateCalls   int
+	wlDeleteCalls   int
+	faSaveCalls     int
+	faInvestCalls   int
+	faSubmitCalls   int
+	faPresetCalls   int
 }
 
 const stubAccount = "DU123456"
@@ -117,6 +130,10 @@ func (s *stubCPAPI) handle(w http.ResponseWriter, r *http.Request) {
 		})
 	case path == "/portfolio/EXPIRED/summary":
 		writeJSON(w, 401, map[string]any{"error": "session expired"})
+	case path == "/portfolio/"+stubAccount+"/positions/invalidate" && r.Method == http.MethodPost:
+		// Must precede the positions-page case below ("invalidate"
+		// is not a page number); counted in handleParity's fixture.
+		s.handleParity(w, r, path, q)
 	case strings.HasPrefix(path, "/portfolio/"+stubAccount+"/positions/"):
 		page, _ := strconv.Atoi(path[strings.LastIndex(path, "/")+1:])
 		if page == 0 {
@@ -212,6 +229,9 @@ func (s *stubCPAPI) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"msg": "Request was submitted", "order_id": 12345})
 
 	default:
+		if s.handleParity(w, r, path, q) {
+			return
+		}
 		writeJSON(w, 404, map[string]any{"error": fmt.Sprintf("stub: unhandled %s %s", r.Method, path)})
 	}
 }
