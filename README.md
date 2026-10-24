@@ -6,7 +6,10 @@ Web API 1.0 (CPAPI 1.0)** — modeled 1:1 on
 [etrade-cli](https://github.com/rayli09/etrade-cli) (same layout,
 conventions, and safety rails), with the endpoint surface taken from
 the official IBKR Web API documentation and cross-checked against the
-Python client [IBind](https://github.com/Voyz/ibind).
+Python client [IBind](https://github.com/Voyz/ibind). Since
+2026-10-24 the CLI is at **full functional parity with IBind**:
+94 leaf commands covering all 85 IBind REST methods and all 8 of its
+WebSocket subscription classes (see the parity table below).
 
 IBKR publishes no official CLI, and CPAPI is the one IBKR API a CLI
 fits: plain HTTPS + JSON against either a local gateway or IBKR's
@@ -110,26 +113,49 @@ Global flags: `--config`, `--base-url` (testing override), `--account`,
 question is pending your answer.
 
 ```sh
-ibkr-cli auth status | tickle | reauth | validate | oauth-status
+ibkr-cli auth status | health | tickle | reauth | validate | oauth-status | logout
 
 ibkr-cli accounts list
 ibkr-cli accounts summary           # --account DU… or config default
+ibkr-cli accounts summary-iserver   # /iserver variant (IBind account_summary)
 ibkr-cli accounts positions         # pages aggregated
 ibkr-cli accounts ledger
 ibkr-cli accounts pnl
+ibkr-cli accounts search <pattern> | signatures | switch <id> | set-dynamic <id>
+
+ibkr-cli portfolio accounts | subaccounts | info | summary | allocation(s)
+ibkr-cli portfolio positions | positions2 | position <conid> | position-info <conid>
+ibkr-cli portfolio combo-positions | ledger | performance | all-periods | transactions
 
 ibkr-cli market search AAPL
 ibkr-cli market stocks AAPL MSFT    # per-exchange conids
 ibkr-cli market info 265598
 ibkr-cli market quote 265598 265599 # priming absorbed (see below)
+ibkr-cli market quote-symbols AAPL MSFT
+ibkr-cli market regsnapshot 265598
 ibkr-cli market history 265598 --period 1m --bar 1d
+ibkr-cli market history-beta | history-symbol | history-symbols | history-multi
 ibkr-cli market strikes 265598 --month NOV26
 ibkr-cli market chain AAPL --expiry 20261120          # ±15% band
 ibkr-cli market chain AAPL --expiry 20261120 --all
 
-ibkr-cli orders list
+ibkr-cli contract secdef 265598 | all-conids | info | info-rules | rules
+ibkr-cli contract algos | bond-filters | pairs | exchangerate | futures | schedule
+ibkr-cli contract stock-conid AAPL  # exactly-one-conid resolution
+
+ibkr-cli orders list [--filters filled] [--force]
 ibkr-cli orders status 12345
 ibkr-cli orders trades --days 7
+ibkr-cli orders suppress <message-id> | suppress-reset   # --confirm gated
+
+ibkr-cli scanner params | run | hmds-params | hmds-run
+ibkr-cli watchlist list | get | create | delete          # create/delete --confirm gated
+ibkr-cli fa models | model-positions | model-summary | model-accounts | invested | preset
+ibkr-cli fa model-save | invest-divest | submit-transfers | preset-save   # --confirm gated
+
+# Bounded WebSocket streams (NDJSON to stdout):
+ibkr-cli stream market 265598 --duration 30s --max-events 100
+ibkr-cli stream orders | trades | account | notifications | history 265598 | ladder 265598
 ```
 
 ### Snapshot priming
@@ -163,6 +189,13 @@ account id with its **PAPER** (DU…) / **LIVE** tag, side, quantity,
 conid, price — plus the margin/commission impact, before any send
 decision.
 
+The same rail covers **every** mutation in the CLI, not just orders:
+`auth logout`, `accounts switch` / `set-dynamic`, `orders suppress` /
+`suppress-reset`, `portfolio invalidate-cache`, `watchlist create` /
+`delete`, and the FA mutations (`fa model-save`, `invest-divest`,
+`submit-transfers`, `preset-save`) all print their payload, stop at
+DRY RUN without `--confirm`, and write to the audit log when sent.
+
 ```sh
 # 1. Preview only (whatif; nothing sent)
 ibkr-cli orders place --conid 265598 --side BUY --qty 10 --price 200
@@ -189,66 +222,178 @@ Paper vs live is an **account property** (DU… = paper), not a mode:
 orders always name the account they target, and the ticket shows its
 tag.
 
-## Parity checklist (CPAPI 1.0 → ibkr-cli)
+## Parity table (IBind → ibkr-cli)
 
-25 leaf commands. Endpoints verified against the official IBKR Web
-API reference and IBind's route coverage.
+94 leaf commands. As of the 2026-10-24 parity extension (Ray's
+directive: match IBind in full), every public IBind method has a CLI
+equivalent. Endpoints verified against IBind's source
+(`ibind/client/ibkr_client_mixins/*.py`, `ibind/ibkr_ws/`) and the
+official IBKR Web API reference. IBind REST surface: **85/85
+methods**. IBind WS surface: **8/8 subscription classes** plus the
+unsolicited topics.
 
-### Auth & session
+### Session (IBind session_mixin, 7 methods)
 
-| Official API | ibkr-cli | Endpoint |
+| IBind method | ibkr-cli | Endpoint |
 |---|---|---|
-| Auth status | `auth status` | `POST /iserver/auth/status` |
-| Tickle / keepalive | `auth tickle` | `POST /tickle` |
-| Reauthenticate brokerage session | `auth reauth` | `POST /iserver/reauthenticate` |
-| SSO validate | `auth validate` | `GET /sso/validate` |
+| authentication_status | `auth status` | `POST /iserver/auth/status` |
+| tickle | `auth tickle` (+ internal auto-tickle before /iserver calls) | `POST /tickle` |
+| reauthenticate | `auth reauth` | `POST /iserver/reauthenticate` |
+| validate | `auth validate` | `GET /sso/validate` |
+| initialize_brokerage_session | inside `auth reauth` / the OAuth provider (SSODH init after LST) | `POST /iserver/auth/ssodh/init` |
+| logout | `auth logout` (--confirm) | `POST /logout` |
+| check_health | `auth health` (tickle + authStatus verdict; exits 3 when unhealthy) | composite |
+| check_auth_status | internal — same verdict logic backs `auth health` and the providers' session checks; no separate command (it is check_health over the other endpoint) | composite |
 | — (local) | `auth init` | writes the 0600 config |
 | — (local) | `auth oauth-status` | credential presence + LST state |
-| Live session token | inside OAuth provider | `POST /oauth/live_session_token` |
-| Brokerage session init (OAuth) | inside OAuth provider | `POST /iserver/auth/ssodh/init` |
+| OAuth LST exchange (IBind oauth module) | inside OAuth provider | `POST /oauth/live_session_token` |
 
-### Accounts
+### Accounts (accounts_mixin, 7)
 
-| Official API | ibkr-cli | Endpoint |
+| IBind method | ibkr-cli | Endpoint |
 |---|---|---|
-| Session accounts | `accounts list` | `GET /iserver/accounts` + `GET /portfolio/accounts` |
-| Account summary | `accounts summary` | `GET /portfolio/{id}/summary` |
-| Positions (paged) | `accounts positions` | `GET /portfolio/{id}/positions/{page}` |
-| Ledger | `accounts ledger` | `GET /portfolio/{id}/ledger` |
-| Partitioned P&L | `accounts pnl` | `GET /iserver/account/pnl/partitioned` |
+| receive_brokerage_accounts | `accounts list` | `GET /iserver/accounts` |
+| account_summary | `accounts summary-iserver` | `GET /iserver/account/{id}/summary` |
+| account_profit_and_loss | `accounts pnl` | `GET /iserver/account/pnl/partitioned` |
+| search_dynamic_account | `accounts search` | `GET /iserver/account/search/{pattern}` |
+| set_dynamic_account | `accounts set-dynamic` (--confirm) | `POST /iserver/dynaccount` |
+| signatures_and_owners | `accounts signatures` | `GET /acesws/{id}/signatures-and-owners` |
+| switch_account | `accounts switch` (--confirm) | `POST /iserver/account` |
 
-### Market
+### Portfolio (portfolio_mixin, 17)
 
-| Official API | ibkr-cli | Endpoint |
+| IBind method | ibkr-cli | Endpoint |
 |---|---|---|
-| Contract search | `market search` | `GET /iserver/secdef/search` |
-| Stocks by symbol | `market stocks` | `GET /trsrv/stocks` |
-| Contract details | `market info` | `GET /iserver/secdef/info` |
-| Market snapshot | `market quote` | `GET /iserver/marketdata/snapshot` |
-| History bars | `market history` | `GET /iserver/marketdata/history` |
-| Option strikes | `market strikes` | `GET /iserver/secdef/strikes` |
-| Option chain | `market chain` | assembled: strikes → info → snapshot |
+| portfolio_accounts | `portfolio accounts` (= `accounts list`) | `GET /portfolio/accounts` |
+| portfolio_subaccounts | `portfolio subaccounts` | `GET /portfolio/subaccounts` |
+| large_portfolio_subaccounts | `portfolio subaccounts-large` | `GET /portfolio/subaccounts2` |
+| portfolio_account_information | `portfolio info` | `GET /portfolio/{id}/meta` |
+| portfolio_summary | `portfolio summary` (= `accounts summary`) | `GET /portfolio/{id}/summary` |
+| portfolio_account_allocation | `portfolio allocation` | `GET /portfolio/{id}/allocation` |
+| portfolio_account_allocations | `portfolio allocations` | `GET /portfolio/allocation` |
+| combination_positions | `portfolio combo-positions` | `GET /portfolio/{id}/combo/positions` |
+| positions | `portfolio positions` (= `accounts positions`, aggregated) | `GET /portfolio/{id}/positions/{page}` |
+| positions2 | `portfolio positions2` | `GET /portfolio2/{id}/positions` |
+| positions_by_conid | `portfolio position` | `GET /portfolio/{id}/position/{conid}` |
+| position_and_contract_info | `portfolio position-info` | `GET /portfolio/positions/{conid}` |
+| get_ledger | `portfolio ledger` (= `accounts ledger`) | `GET /portfolio/{id}/ledger` |
+| invalidate_backend_portfolio_cache | `portfolio invalidate-cache` (--confirm) | `POST /portfolio/{id}/positions/invalidate` |
+| account_performance | `portfolio performance` | `POST /pa/performance` |
+| all_periods | `portfolio all-periods` | `POST /pa/allperiods` |
+| transaction_history | `portfolio transactions` | `POST /pa/transactions` |
 
-### Orders
+### Contract (contract_mixin, 16)
 
-| Official API | ibkr-cli | Endpoint |
+| IBind method | ibkr-cli | Endpoint |
 |---|---|---|
-| Live orders | `orders list` | `GET /iserver/account/orders` |
-| Order status | `orders status` | `GET /iserver/account/order/status/{id}` |
-| Trades / executions | `orders trades` | `GET /iserver/account/trades` |
-| What-if preview | inside `orders place` / `modify` | `POST /iserver/account/{id}/orders/whatif` |
-| Place order | `orders place` (dry-run unless `--confirm`) | `POST /iserver/account/{id}/orders` |
-| Reply to question | `orders reply` (one question, explicit) | `POST /iserver/reply/{id}` |
-| Modify order | `orders modify` (dry-run unless `--confirm`) | `POST /iserver/account/{id}/order/{oid}` |
-| Cancel order | `orders cancel` (shows order; sends only with `--confirm`) | `DELETE /iserver/account/{id}/order/{oid}` |
+| search_contract_by_symbol | `market search` | `GET /iserver/secdef/search` |
+| search_secdef_info_by_conid | `market info` (incl. --issuer-id) | `GET /iserver/secdef/info` |
+| search_strikes_by_conid | `market strikes` (incl. --sectype/--exchange) | `GET /iserver/secdef/strikes` |
+| security_stocks_by_symbol | `market stocks` | `GET /trsrv/stocks` |
+| security_definition_by_conid | `contract secdef` | `GET /trsrv/secdef` |
+| all_conids_by_exchange | `contract all-conids` | `GET /trsrv/all-conids` |
+| contract_information_by_conid | `contract info` | `GET /iserver/contract/{conid}/info` |
+| info_and_rules_by_conid | `contract info-rules` | `GET /iserver/contract/{conid}/info-and-rules` |
+| search_contract_rules | `contract rules` | `POST /iserver/contract/rules` |
+| algo_params_by_conid | `contract algos` | `GET /iserver/contract/{conid}/algos` |
+| search_bond_filter_information | `contract bond-filters` | `GET /iserver/secdef/bond-filters` |
+| currency_pairs | `contract pairs` | `GET /iserver/currency/pairs` |
+| currency_exchange_rate | `contract exchangerate` | `GET /iserver/exchangerate` |
+| security_future_by_symbol | `contract futures` | `GET /trsrv/futures` |
+| stock_conid_by_symbol | `contract stock-conid` (IBind's isUS default filtering; ambiguity is an error, never a guess) | composition of `trsrv/stocks` |
+| trading_schedule_by_symbol | `contract schedule` | `GET /trsrv/secdef/schedule` |
+
+### Market data (marketdata_mixin, 10)
+
+| IBind method | ibkr-cli | Endpoint |
+|---|---|---|
+| live_marketdata_snapshot | `market quote` | `GET /iserver/marketdata/snapshot` |
+| live_marketdata_snapshot_by_symbol | `market quote-symbols` | composition: stock-conid → snapshot |
+| regulatory_snapshot | `market regsnapshot` | `GET /md/regsnapshot` |
+| marketdata_history_by_conid | `market history` (incl. --exchange/--start-time) | `GET /iserver/marketdata/history` |
+| historical_marketdata_beta | `market history-beta` | `GET /hmds/history` |
+| marketdata_history_by_conids | `market history-multi` (parallel, ≤4 workers, per-conid errors on stderr) | composition |
+| marketdata_history_by_symbol | `market history-symbol` | composition |
+| marketdata_history_by_symbols | `market history-symbols` | composition |
+| marketdata_unsubscribe | stream lifecycle — every `stream` command unsubscribes its channels before closing; REST snapshot subscriptions do not outlive a one-shot process | WS (umd/umh/...) |
+| marketdata_unsubscribe_all | stream lifecycle — closing the WS session drops all of its subscriptions | WS close |
+
+### Orders (order_mixin, 10)
+
+| IBind method | ibkr-cli | Endpoint |
+|---|---|---|
+| live_orders | `orders list` (incl. --filters/--force) | `GET /iserver/account/orders` |
+| order_status | `orders status` | `GET /iserver/account/order/status/{id}` |
+| trades | `orders trades` | `GET /iserver/account/trades` |
+| whatif_order | inside `orders place` / `modify` | `POST /iserver/account/{id}/orders/whatif` |
+| place_order | `orders place` (dry-run unless `--confirm`) | `POST /iserver/account/{id}/orders` |
+| reply | `orders reply` (one question, explicit) | `POST /iserver/reply/{id}` |
+| modify_order | `orders modify` (dry-run unless `--confirm`) | `POST /iserver/account/{id}/order/{oid}` |
+| cancel_order | `orders cancel` (shows order; sends only with `--confirm`) | `DELETE /iserver/account/{id}/order/{oid}` |
+| suppress_messages | `orders suppress` (--confirm) | `POST /iserver/questions/suppress` |
+| reset_suppressed_messages | `orders suppress-reset` (--confirm) | `POST /iserver/questions/suppress/reset` |
+
+### Scanner (scanner_mixin, 4)
+
+| IBind method | ibkr-cli | Endpoint |
+|---|---|---|
+| scanner_parameters | `scanner params` | `GET /iserver/scanner/params` |
+| market_scanner | `scanner run` | `POST /iserver/scanner/run` |
+| hmds_scanner_parameters | `scanner hmds-params` | `GET /hmds/scanner/params` |
+| hmds_market_scanner | `scanner hmds-run` | `POST /hmds/scanner/run` |
+
+### Watchlist (watchlist_mixin, 4)
+
+| IBind method | ibkr-cli | Endpoint |
+|---|---|---|
+| get_all_watchlists | `watchlist list` | `GET /iserver/watchlists` |
+| get_watchlist_information | `watchlist get` | `GET /iserver/watchlist` |
+| create_watchlist | `watchlist create` (--confirm) | `POST /iserver/watchlist` |
+| delete_watchlist | `watchlist delete` (shows it first; --confirm) | `DELETE /iserver/watchlist` |
+
+### FA (fa_mixin, 10)
+
+| IBind method | ibkr-cli | Endpoint |
+|---|---|---|
+| fa_model_list | `fa models` | `POST /fa/model/list` |
+| fa_model_positions | `fa model-positions` | `POST /fa/model/positions` |
+| fa_model_summary | `fa model-summary` | `POST /fa/model/summary` |
+| fa_model_accounts_details | `fa model-accounts` | `POST /fa/model/accounts-details` |
+| fa_model_save | `fa model-save` (--confirm) | `POST /fa/model/save` |
+| fa_model_invest_divest | `fa invest-divest` (--confirm) | `POST /fa/model/invest-divest` |
+| fa_model_invest_divest_positions | `fa invested` | `POST /fa/model/invest-divest-positions` |
+| fa_model_submit_transfers | `fa submit-transfers` (--confirm) | `POST /fa/model/submit-transfers` |
+| fa_preset_get | `fa preset` | `POST /fa/fa-preset/get` |
+| fa_preset_save | `fa preset-save` (--confirm) | `POST /fa/fa-preset/save` |
+
+### WebSocket (IbkrWsClient, 8 subscription classes + unsolicited topics)
+
+Bounded streams: `--duration` (default 30s) and `--max-events`,
+NDJSON to stdout, unsubscribe-then-close on exit. Handshake per
+IBind: REST tickle → session cookie (`api={"session": ...}` in
+gateway mode, `api=<session>` + `?oauth_token=` + `User-Agent:
+ClientPortalGW/1` in OAuth mode).
+
+| IBind subscription | ibkr-cli | Payload / topic |
+|---|---|---|
+| MarketDataSubscription | `stream market` | `smd` / md |
+| MarketHistorySubscription | `stream history` | `smh` / mh (unsubscribe uses the stream's serverId) |
+| PriceLadderSubscription | `stream ladder` | `sbd` / bd |
+| OrdersSubscription | `stream orders` | `sor` / or |
+| TradesSubscription | `stream trades` | `str` / tr |
+| AccountSummarySubscription | `stream account` | `ssd` / sd |
+| AccountLedgerSubscription | `stream account` | `sld` / ld |
+| PnlSubscription | `stream account` | `spl` / pl |
+| unsolicited: notifications, bulletins, account updates, auth status, heartbeat | `stream notifications` | ntf, blt, act, sts, system/tic |
 
 ### Rate limits (enforced client-side, per route)
 
 From IBKR's published Web API limits: snapshot 10 req/s; history max
 5 concurrent; live orders / trades / partitioned P&L / portfolio
-routes 1 req per 5 s; tickle 1 req/s; SSO validate 1 req/min. HTTP
-429 is retried up to 3 attempts honoring `Retry-After`, then surfaces
-as a typed rate-limit error (exit 4).
+routes 1 req per 5 s; tickle 1 req/s; SSO validate 1 req/min;
+scanner runs 1 req/s; scanner params and the /pa/* routes 1 req per
+15 min. HTTP 429 is retried up to 3 attempts honoring `Retry-After`,
+then surfaces as a typed rate-limit error (exit 4).
 
 ### Spec errata (found at build time, docs/SPEC.md §5 vs sources)
 
@@ -263,16 +408,21 @@ as a typed rate-limit error (exit 4).
   against IBind-generated test vectors. It has not been exercised
   against a live IBKR account (none was available at build time).
 - The spec's §5 tables enumerate 25 commands, not 21 as its headline
-  said; all 25 are implemented (`auth init` and `auth oauth-status`
-  included).
+  said; all 25 were implemented in v1 (`auth init` and
+  `auth oauth-status` included). The 2026-10-24 parity extension
+  brings the total to 94.
 
 ### Not ported, honestly
 
-- **WebSocket streaming** (`/iserver/stream`, market-data and order
-  update streams). A one-shot CLI polls; streaming belongs to a
-  daemon. IBind's WS layer is the reference if that changes.
+- **OAuth-mode WebSocket handshake** — implemented exactly as IBind
+  implements it (session cookie + `?oauth_token=`), and covered for
+  gateway mode by a stub WS server in tests, but never exercised
+  against a live IBKR account (none exists yet — same status as the
+  P5 live smoke). If IBKR's production WS endpoint rejects the
+  handshake, this is the first thing to re-check.
 - **Flex Web Service and the Account Management API** — different
-  products (reporting / account administration), out of scope.
+  products (reporting / account administration), not part of IBind;
+  out of scope.
 - **Full-universe contract enumeration** — CPAPI genuinely has no
   chain endpoint; see the chain note above.
 
@@ -292,7 +442,12 @@ end-to-end against an in-process stub CPAPI server covering: snapshot
 priming (empty → filled), a placement raising **two** question rounds
 before returning an order id, session expiry (exit 3), 429 retry and
 exhaustion, the dry-run rail (stub proves nothing was placed), chain
-assembly, and the 0600 config write.
+assembly, and the 0600 config write. The parity extension adds stub
+fixtures for every new endpoint group with E2E tests per group
+(mutating commands proven dry-run-safe by stub call counters), a
+stub WebSocket server exercising the stream commands' subscribe →
+NDJSON → unsubscribe lifecycle, and byte-format tests for the WS
+subscription payloads against IBind's formats.
 
 CI (GitHub Actions) runs gofmt, vet, build, and tests on every push.
 

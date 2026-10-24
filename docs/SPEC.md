@@ -49,6 +49,20 @@ order construction beyond what CPAPI's order object passes through,
 futures/forex-specific helpers (they work via the same contract/order
 model but get no dedicated commands), Flex Web Service reporting.
 
+> **Superseded 2026-10-24 (Ray's parity directive — "need to match
+> all" of IBind):** the WebSocket non-goal above no longer holds.
+> Streaming is implemented as *bounded* stream commands (`stream
+> market|history|ladder|orders|trades|account|notifications`,
+> --duration/--max-events, NDJSON out) over both auth modes, and the
+> v1 surface was extended to full IBind parity: 94 leaf commands
+> covering all 85 IBind REST methods and all 8 WS subscription
+> classes (see README.md's parity table). The one-shot character is
+> preserved — streams are bounded, not a daemon. The OAuth-mode WS
+> handshake (api=<session> cookie + ?oauth_token=) follows IBind's
+> implementation but, like P5, has never been exercised against a
+> live IBKR account; treat it as implemented-but-unverified until a
+> paper account exists.
+
 ## 2. Architecture
 
 - **Language/stack:** Go (latest stable, ≥1.27 per sibling repos) +
@@ -331,6 +345,13 @@ before any live call):
 
 WebSocket streaming, scanner commands (`/iserver/scanner/*`), and
 FYI/notifications are **backlog**, not phases.
+
+> **2026-10-24 update:** that backlog was cleared by the parity
+> extension (Ray's directive, same day): scanner commands, bounded
+> WebSocket streaming (including the unsolicited ntf/blt topics via
+> `stream notifications`), and the rest of the IBind surface shipped
+> as phases P6 (REST parity) and P7 (WS parity), verified against
+> stub fixtures; live verification still waits on P5's account.
 
 ## 10. Open items (Ray / wiring time)
 
