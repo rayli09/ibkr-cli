@@ -105,6 +105,7 @@ prints it verbatim and stops (exit code 5); answer it with
 		"HTTP timeout for API calls")
 
 	root.AddCommand(newAuthCmd(opts))
+	root.AddCommand(newSetupCmd(opts))
 	root.AddCommand(newAccountsCmd(opts))
 	root.AddCommand(newPortfolioCmd(opts))
 	root.AddCommand(newMarketCmd(opts))
