@@ -1,0 +1,25 @@
+# IBeam + Client Portal Gateway for ibkr-cli (Mode G, gateway auth).
+#
+# Shape follows the upstream IBeam project (github.com/Voyz/ibeam).
+# This scaffold is paper-first: env.list sets
+# IBEAM_USE_PAPER_ACCOUNT=true. See deploy/README.md for the runbook,
+# or let the CLI drive the checks: ibkr-cli setup --up --wait 180s --json
+
+services:
+  ibeam:
+    image: voyz/ibeam
+    container_name: ibeam
+    env_file:
+      - env.list
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    # The Client Portal Gateway whitelists client IPs; it must see
+    # real source IPs, so bridge networking is required (upstream
+    # requirement — several NAT/host setups get sessions rejected).
+    network_mode: bridge
+    # Deliberately "no": a crash-looping container retries login until
+    # it exceeds IBEAM_MAX_FAILED_AUTH (default 5) and can lock the
+    # account. Start it on purpose instead:
+    #   docker compose up -d        (or: ibkr-cli setup --up)
+    restart: "no"

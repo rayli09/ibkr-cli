@@ -1,3 +1,7 @@
 /ibkr-cli
 *.test
 coverage.out
+
+# IBeam credentials — never commit (deploy/ibeam/env.list.example is
+# the shareable template; the real env.list holds the IBKR password).
+deploy/ibeam/env.list
