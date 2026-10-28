@@ -104,6 +104,56 @@ the brokerage tier (gateway mode: `POST /iserver/reauthenticate` —
 beyond that, IBeam owns re-login and the CLI says so rather than
 pretending).
 
+## Agent quickstart (gateway mode)
+
+The IBeam stack ships in this repo (`deploy/ibeam/` — compose file,
+env template, runbook in `deploy/README.md`), and the `setup` command
+drives it end to end. It is built for agents: **non-interactive**
+(never prompts), **machine-readable** (`--json` verdict object), and
+**self-diagnosing** (every failed step names its fix). It never reads
+the IBKR password — compose reads `env.list` itself; setup only
+reports which keys are set.
+
+```sh
+git clone https://github.com/rayli09/ibkr-cli.git && cd ibkr-cli
+go build -o ibkr-cli .
+
+cp deploy/ibeam/env.list.example deploy/ibeam/env.list
+chmod 600 deploy/ibeam/env.list
+$EDITOR deploy/ibeam/env.list   # IBEAM_ACCOUNT + IBEAM_PASSWORD (+ TOTP seed for unattended 2FA)
+
+ibkr-cli setup --up --wait 180s --json
+```
+
+`setup` walks the stack in order — docker CLI → daemon → scaffold
+dir → `env.list` (presence, 0600, required keys set, paper flag) →
+container (`docker compose ps`, `--up`/`--down` to change it) →
+gateway probe (`/iserver/auth/status`) → CLI config (report, or
+`--init-config` to write a gateway-mode config non-interactively) →
+two-tier session verdict — and prints one verdict object:
+
+```json
+{"ready": true, "stage": "paper-ready",
+ "steps": [{"name": "docker-cli", "status": "ok", "detail": "…", "fix": ""}],
+ "next_actions": ["ibkr-cli auth status", "…"]}
+```
+
+Stages: `paper-ready` / `ready` (exit **0**, only when the gateway is
+authenticated **and** the brokerage session is live),
+`stack-down` / `gateway-unreachable` / `session-not-authenticated`
+(exit **3**), and `no-docker` / `bad-dir` / `no-env` (exit **2**).
+The scaffold is paper-first (`IBEAM_USE_PAPER_ACCOUNT=true`); going
+live means deliberately flipping that value in `env.list`.
+
+Once `setup` reports ready, the smoke ladder:
+
+```sh
+ibkr-cli auth status       # two-tier session state
+ibkr-cli accounts list     # accounts visible to the session
+ibkr-cli market quote 265598   # AAPL — priming absorbed
+ibkr-cli orders list       # live orders (none yet, on a fresh paper account)
+```
+
 ## Usage
 
 Every read command prints a table, or the raw JSON with `--json`.
@@ -114,6 +164,7 @@ question is pending your answer.
 
 ```sh
 ibkr-cli auth status | health | tickle | reauth | validate | oauth-status | logout
+ibkr-cli setup [--up] [--down] [--wait 180s] [--init-config] [--dir deploy/ibeam] [--json]
 
 ibkr-cli accounts list
 ibkr-cli accounts summary           # --account DU… or config default
